@@ -2,12 +2,14 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/prometheus/prometheus/util/flock"
 	log "github.com/sirupsen/logrus"
@@ -25,6 +27,7 @@ import (
 	"github.com/bytom/consensus"
 	"github.com/bytom/crypto/ed25519/chainkd"
 	"github.com/bytom/database/leveldb"
+	chainjson "github.com/bytom/encoding/json"
 	"github.com/bytom/env"
 	"github.com/bytom/mining/cpuminer"
 	"github.com/bytom/mining/miningpool"
@@ -268,7 +271,7 @@ func (n *Node) OnStart() error {
 		}
 		launchWebBrowser(s[1])
 	}
-	// TODO 增加对连接的主链节点
+	bytomdRPCCheck()
 	return nil
 }
 
@@ -295,4 +298,29 @@ func (n *Node) SyncManager() *netsync.SyncManager {
 
 func (n *Node) MiningPool() *miningpool.MiningPool {
 	return n.miningPool
+}
+
+/**bytomdRPCCheck Check if bytomd connection via RPC is correctly working*/
+func bytomdRPCCheck() bool {
+	for {
+		req := &struct {
+			BlockHeight uint64             `json:"block_height"`
+			BlockHash   chainjson.HexBytes `json:"block_hash"`
+		}{BlockHeight: 0}
+		resp, err := util.CallRPC("/get-block-header", req)
+		if err != nil {
+			log.Error("Call mainchain interface get-block-header failed")
+			time.Sleep(time.Millisecond * 1000)
+		}
+		tmp, _ := json.Marshal(resp)
+		var blockHeader api.GetBlockHeaderResp
+		json.Unmarshal(tmp, &blockHeader)
+		hash := blockHeader.BlockHeader.Hash()
+		if strings.Compare(consensus.ActiveNetParams.ParentGenesisBlockHash, hash.String()) != 0 {
+			log.Error("Invalid parent genesis block hash response via RPC. Contacting wrong parent daemon?")
+			return false
+		}
+		break
+	}
+	return true
 }
